@@ -5,12 +5,23 @@ import jade.core.Agent;
 import jade.core.behaviours.CyclicBehaviour;
 import jade.lang.acl.ACLMessage;
 import jade.lang.acl.MessageTemplate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.*;
 
 public class BrokerAgent extends Agent {
+    // List of all available resource agents
+    private static final String[] RESOURCE_AGENTS = {
+            "WikipediaAgent",
+            "DuckDuckGoAgent",
+            "BookSearchAgent",
+            "OpenRouterAgent",
+            "WolframAlphaAgent"
+    };
+
     protected void setup() {
         System.out.println("BrokerAgent " + getAID().getName() + " is ready.");
 
-        // Main behavior to process incoming REQUEST messages from users
         addBehaviour(new CyclicBehaviour(this) {
             public void action() {
                 ACLMessage msg = receive(MessageTemplate.MatchPerformative(ACLMessage.REQUEST));
@@ -31,123 +42,111 @@ public class BrokerAgent extends Agent {
             }
 
             private boolean isComplexQuery(String query) {
-                // Check for multiple clauses
                 String lowerQuery = query.toLowerCase();
-                return lowerQuery.contains(" and ") ||
+                return lowerQuery.matches(".*\\b(and|or|but|then|also|as well as|before|after|while|meanwhile)\\b.*") ||
                         lowerQuery.contains(",") ||
+                        lowerQuery.contains(";") ||
                         lowerQuery.split("\\?").length > 1 ||
-                        lowerQuery.matches(".*(list|compare|difference|between).*");
+                        lowerQuery.matches(".*\\b(list|compare|difference|between|advantages|disadvantages|pros|cons)\\b.*");
             }
 
             private void handleSimpleQuery(ACLMessage originalMsg) {
                 String query = originalMsg.getContent();
 
                 // First check internal knowledge
-                ACLMessage checkInternal = new ACLMessage(ACLMessage.QUERY_IF);
-                checkInternal.addReceiver(getAID("InternalAgent"));
-                checkInternal.setContent(query);
-                send(checkInternal);
-
-                // Wait for response from InternalAgent
-                MessageTemplate mt = MessageTemplate.or(
-                        MessageTemplate.MatchPerformative(ACLMessage.CONFIRM),
-                        MessageTemplate.MatchPerformative(ACLMessage.DISCONFIRM)
-                );
-
-                ACLMessage internalReply = blockingReceive(mt, 1000);
-
-                if (internalReply != null && internalReply.getPerformative() == ACLMessage.CONFIRM) {
-                    // Found in internal knowledge base, forward result to user
+                String cachedResponse = KnowledgeStorage.retrieve(query);
+                if (cachedResponse != null) {
                     ACLMessage reply = originalMsg.createReply();
                     reply.setPerformative(ACLMessage.INFORM);
-                    reply.setContent("Internal Result:\n" + internalReply.getContent());
+                    reply.setContent("Cached Result:\n" + cachedResponse);
                     send(reply);
+                    return;
+                }
 
-                } else {
-                    // Not found in internal knowledge, select best external agent
-                    String bestAgent = selectBestResourceAgent(query);
-                    System.out.println("Not found internally. Selected " + bestAgent + " for: " + query);
+                // Query all resources in parallel
+                ExecutorService executor = Executors.newFixedThreadPool(RESOURCE_AGENTS.length);
+                List<Future<String>> futures = new ArrayList<>();
 
-                    // Forward to selected external agent
-                    ACLMessage externalRequest = new ACLMessage(ACLMessage.REQUEST);
-                    externalRequest.addReceiver(new AID(bestAgent, AID.ISLOCALNAME));
-                    externalRequest.setContent(query);
-                    send(externalRequest);
+                for (String agentName : RESOURCE_AGENTS) {
+                    futures.add(executor.submit(() -> {
+                        try {
+                            ACLMessage request = new ACLMessage(ACLMessage.REQUEST);
+                            request.addReceiver(new AID(agentName, AID.ISLOCALNAME));
+                            request.setContent(query);
+                            send(request);
 
-                    // Wait for response from external agent
-                    ACLMessage externalReply = blockingReceive(
-                            MessageTemplate.MatchPerformative(ACLMessage.INFORM),
-                            5000
-                    );
+                            ACLMessage reply = blockingReceive(
+                                    MessageTemplate.and(
+                                            MessageTemplate.MatchPerformative(ACLMessage.INFORM),
+                                            MessageTemplate.MatchSender(new AID(agentName, AID.ISLOCALNAME))
+                                    ),
+                                    5000
+                            );
+                            return reply != null ? formatResponse(agentName, reply.getContent()) : null;
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    }));
+                }
 
-                    if (externalReply != null) {
-                        // Forward result to user
-                        ACLMessage userReply = originalMsg.createReply();
-                        userReply.setPerformative(ACLMessage.INFORM);
-                        userReply.setContent(externalReply.getContent());
-                        send(userReply);
+                // Collect results
+                StringBuilder combinedResults = new StringBuilder();
+                combinedResults.append("=== Combined Results from All Sources ===\n\n");
 
-                        // Store in cache
-                        ACLMessage store = new ACLMessage(ACLMessage.INFORM);
-                        store.addReceiver(getAID("InternalAgent"));
-                        store.setContent(query + "::" + externalReply.getContent());
-                        send(store);
-                    } else {
-                        // No response from external agent
-                        ACLMessage errorReply = originalMsg.createReply();
-                        errorReply.setPerformative(ACLMessage.INFORM);
-                        errorReply.setContent("Sorry, no results found for your query.");
-                        send(errorReply);
+                for (int i = 0; i < futures.size(); i++) {
+                    try {
+                        String result = futures.get(i).get(6, TimeUnit.SECONDS); // Slightly longer timeout
+                        if (result != null) {
+                            combinedResults.append(result).append("\n\n");
+                            // Store the first successful response in cache
+                            if (cachedResponse == null) {
+                                KnowledgeStorage.store(query, result);
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Ignore timeouts or errors for individual sources
                     }
                 }
+
+                executor.shutdown();
+
+                // Send combined response
+                ACLMessage reply = originalMsg.createReply();
+                reply.setPerformative(ACLMessage.INFORM);
+                if (combinedResults.length() > 0) {
+                    reply.setContent(combinedResults.toString());
+                } else {
+                    reply.setContent("Sorry, no results found from any sources.");
+                }
+                send(reply);
+            }
+
+            private String formatResponse(String agentName, String content) {
+                String sourceName = agentName.replace("Agent", "");
+                return "[" + sourceName + " Result]\n" + content;
             }
 
             private void handleComplexQuery(ACLMessage originalMsg) {
-                String query = originalMsg.getContent();
-
-                // Forward to ExecutionAgent with original sender info
+                // Forward to ExecutionAgent as before
                 ACLMessage forward = new ACLMessage(ACLMessage.REQUEST);
                 forward.addReceiver(getAID("ExecutionAgent"));
-                forward.setContent(query);
+                forward.setContent(originalMsg.getContent());
                 send(forward);
 
-                // Wait for response from ExecutionAgent with a longer timeout
                 ACLMessage executionReply = blockingReceive(
                         MessageTemplate.MatchPerformative(ACLMessage.INFORM),
-                        15000  // Longer timeout for complex queries
+                        15000
                 );
 
-                if (executionReply != null) {
-                    // Forward result to original user
-                    ACLMessage userReply = originalMsg.createReply();
-                    userReply.setPerformative(ACLMessage.INFORM);
-                    userReply.setContent(executionReply.getContent());
-                    send(userReply);
-                    System.out.println("Forwarded complex query results to user");
-                } else {
-                    // No response from ExecutionAgent
-                    ACLMessage errorReply = originalMsg.createReply();
-                    errorReply.setPerformative(ACLMessage.INFORM);
-                    errorReply.setContent("Sorry, could not process your complex query.");
-                    send(errorReply);
-                    System.out.println("No response from ExecutionAgent - timeout");
-                }
+                ACLMessage userReply = originalMsg.createReply();
+                userReply.setPerformative(ACLMessage.INFORM);
+                userReply.setContent(executionReply != null ?
+                        executionReply.getContent() :
+                        "Sorry, could not process your complex query.");
+                send(userReply);
             }
-
-            private String selectBestResourceAgent(String query) {
-                // Simple heuristic for resource selection
-                String lowerQuery = query.toLowerCase();
-                if (lowerQuery.matches(".*(book|author|novel|publication).*")) {
-                    return "BookSearchAgent";
-                } else if (lowerQuery.matches(".*(what is|who is|define|explain).*")) {
-                    return "WikipediaAgent";
-                } else if (lowerQuery.matches(".*(explain|summarize|write|generate|why|how).*")) {
-                    return "DeepSeekAgent";
-                } else {
-                    return "DuckDuckGoAgent"; // Default fallback
-                }
-            }
-
         });
     }
 }
+
+

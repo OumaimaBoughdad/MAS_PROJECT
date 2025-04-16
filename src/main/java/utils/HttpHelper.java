@@ -3,114 +3,80 @@ package utils;
 import java.net.*;
 import java.io.*;
 import java.util.Scanner;
-
 import org.json.*;
 
 public class HttpHelper {
+    private static final int TIMEOUT = 10000;
+
     public static String searchExternalSource(String source, String query) {
         try {
             switch (source.toLowerCase()) {
                 case "wikipedia":
-                    return searchWikipedia(query);
+                    return "Wikipedia Result:\n" + searchWikipedia(query);
                 case "openrouter":
-                    return queryOpenRouter(query);  // ✅ Add this line
+                    return "AI Response:\n" + queryOpenRouter(query);
                 case "duckduckgo":
-                    return searchDuckDuckGo(query);
+                    return "DuckDuckGo Result:\n" + searchDuckDuckGo(query);
                 case "googlebooks":
-                    return searchGoogleBooks(query);
+                    return "Book Result:\n" + searchGoogleBooks(query);
                 default:
                     return "Unknown source: " + source;
             }
         } catch (Exception e) {
-            return "Error fetching from " + source + ": " + e.getMessage();
+            return source + " Result:\nError fetching from " + source + ": " + cleanErrorMessage(e.getMessage());
         }
     }
 
-
+    private static String cleanErrorMessage(String error) {
+        if (error == null) return "Unknown error";
+        // Remove any regex patterns from error messages
+        return error.replaceAll("\\^\\[\\\\\\?\\w+\\\\\\?\\]\\?\\\\s\\*\\(", "")
+                .replaceAll("\\|.*", "")
+                .trim();
+    }
 
     private static String queryOpenRouter(String prompt) {
         try {
             URL url = new URL("https://openrouter.ai/api/v1/chat/completions");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", "Bearer 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");
+            conn.setRequestProperty("Authorization", "Bearer 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");
             conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("HTTP-Referer", "YOUR_WEBSITE_URL");
+            conn.setRequestProperty("X-Title", "YOUR_APP_NAME");
+            conn.setConnectTimeout(TIMEOUT);
+            conn.setReadTimeout(TIMEOUT);
             conn.setDoOutput(true);
 
-            String payload = """
-        {
-          "model": "mistralai/mistral-7b-instruct",
-          "messages": [{"role": "user", "content": "%s"}]
-        }
-        """.formatted(prompt);
+            String payload = String.format("""
+                {
+                  "model": "mistralai/mistral-7b-instruct",
+                  "messages": [{"role": "user", "content": "%s"}],
+                  "temperature": 0.7,
+                  "max_tokens": 1000
+                }
+                """, prompt.replace("\"", "\\\""));
 
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(payload.getBytes());
                 os.flush();
             }
 
-            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder result = new StringBuilder();
-            String line;
-
-            while ((line = in.readLine()) != null) {
-                result.append(line);
-            }
-
-            in.close();
-            return extractOpenAIResponse(result.toString()); // reuse your existing method
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Error calling OpenRouter.";
-        }
-    }
-
-
-    // new function
-    private static String queryWolframAlpha(String query) {
-        String apiKey = "YEU4GX-67X6429KHW";  // ✅ Your working WolframAlpha AppID
-        try {
-            String encodedQuery = URLEncoder.encode(query, "UTF-8");
-            String endpoint = "http://api.wolframalpha.com/v2/query?input=" +
-                    encodedQuery + "&format=plaintext&output=JSON&appid=" + apiKey;
-
-            URL url = new URL(endpoint);
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("GET");
-
-            InputStream is = connection.getInputStream();
-            Scanner scanner = new Scanner(is).useDelimiter("\\A");
-            String response = scanner.hasNext() ? scanner.next() : "";
-
-            JSONObject jsonResponse = new JSONObject(response);
-
-            if (jsonResponse.getJSONObject("queryresult").getBoolean("success")) {
-                return jsonResponse
-                        .getJSONObject("queryresult")
-                        .getJSONArray("pods")
-                        .getJSONObject(0)
-                        .getJSONArray("subpods")
-                        .getJSONObject(0)
-                        .getString("plaintext");
+            if (conn.getResponseCode() == 200) {
+                try (BufferedReader in = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream()))) {
+                    JSONObject jsonResponse = new JSONObject(readAll(in));
+                    return jsonResponse.getJSONArray("choices")
+                            .getJSONObject(0)
+                            .getJSONObject("message")
+                            .getString("content");
+                }
             } else {
-                return "No results found for the query.";
+                return "API Error: " + conn.getResponseCode();
             }
         } catch (Exception e) {
-            e.printStackTrace();
-            return "Error fetching data from WolframAlpha: " + e.getMessage();
+            return "Connection Error: " + e.getMessage();
         }
-    }
-
-
-
-
-
-    private static String extractOpenAIResponse(String json) {
-        int index = json.indexOf("\"content\":\"");
-        if (index == -1) return "No valid response.";
-        String partial = json.substring(index + 11);
-        int end = partial.indexOf("\"");
-        return partial.substring(0, end).replace("\\n", "\n");
     }
 
     public static String searchWikipedia(String query) throws Exception {
@@ -119,71 +85,88 @@ public class HttpHelper {
                 URLEncoder.encode(formattedQuery, "UTF-8");
         String response = sendGet(url);
         JSONObject json = new JSONObject(response);
-        return json.optString("extract", "No summary found.");
+
+        if (json.has("title") && !json.isNull("extract")) {
+            return json.getString("extract");
+        }
+        throw new Exception("Page not found");
     }
-
-
-
-
-
 
     public static String searchDuckDuckGo(String query) throws Exception {
         String url = "https://api.duckduckgo.com/?q=" +
-                URLEncoder.encode(query, "UTF-8") + "&format=json";
+                URLEncoder.encode(query, "UTF-8") + "&format=json&no_html=1&skip_disambig=1";
         String response = sendGet(url);
         JSONObject json = new JSONObject(response);
+
         String result = json.optString("AbstractText");
         if (result == null || result.isEmpty()) {
             JSONArray relatedTopics = json.optJSONArray("RelatedTopics");
             if (relatedTopics != null && relatedTopics.length() > 0) {
-                JSONObject topic = relatedTopics.getJSONObject(0);
-                result = topic.optString("Text", "No result found.");
+                result = relatedTopics.getJSONObject(0)
+                        .optString("Text", "No result found.");
             }
         }
-        return result != null && !result.isEmpty() ? result : "No result found.";
+
+        if (result == null || result.isEmpty()) {
+            throw new Exception("No results found");
+        }
+        return result;
     }
 
     public static String searchGoogleBooks(String query) throws Exception {
         String url = "https://www.googleapis.com/books/v1/volumes?q=" +
-                URLEncoder.encode(query, "UTF-8");
+                URLEncoder.encode(query, "UTF-8") + "&maxResults=1";
         String response = sendGet(url);
         JSONObject json = new JSONObject(response);
         JSONArray items = json.optJSONArray("items");
-        if (items != null && items.length() > 0) {
-            JSONObject firstItem = items.getJSONObject(0);
-            JSONObject volumeInfo = firstItem.getJSONObject("volumeInfo");
-            String title = volumeInfo.optString("title", "No title");
-            String authors = volumeInfo.has("authors") ?
-                    volumeInfo.getJSONArray("authors").join(", ") : "No authors";
-            String description = volumeInfo.optString("description", "No description");
-            return "Title: " + title + "\nAuthors: " + authors +
-                    "\nDescription: " + description;
-        } else {
-            return "No book info found.";
+
+        if (items == null || items.length() == 0) {
+            throw new Exception("No books found");
         }
+
+        JSONObject volumeInfo = items.getJSONObject(0).getJSONObject("volumeInfo");
+        StringBuilder result = new StringBuilder();
+        result.append("Title: ").append(volumeInfo.optString("title", "Unknown"));
+
+        if (volumeInfo.has("authors")) {
+            result.append("\nAuthors: ")
+                    .append(String.join(", ", volumeInfo.getJSONArray("authors").toList().stream()
+                            .map(Object::toString)
+                            .toArray(String[]::new)));
+        }
+
+        result.append("\nPublished: ")
+                .append(volumeInfo.optString("publishedDate", "Unknown"))
+                .append("\nDescription: ")
+                .append(volumeInfo.optString("description", "Not available"));
+
+        return result.toString();
     }
 
-    public static String sendGet(String url) throws Exception {
-        HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
-        con.setRequestMethod("GET");
-        con.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    private static String sendGet(String url) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+        conn.setConnectTimeout(TIMEOUT);
+        conn.setReadTimeout(TIMEOUT);
 
-        int status = con.getResponseCode();
-        BufferedReader in;
+        int status = conn.getResponseCode();
         if (status >= 200 && status < 300) {
-            in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+            try (BufferedReader in = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream()))) {
+                return readAll(in);
+            }
         } else {
             throw new IOException("HTTP error code: " + status);
         }
+    }
 
+    private static String readAll(BufferedReader reader) throws IOException {
         StringBuilder content = new StringBuilder();
         String line;
-        while ((line = in.readLine()) != null) {
+        while ((line = reader.readLine()) != null) {
             content.append(line);
         }
-        in.close();
-        con.disconnect();
-
         return content.toString();
     }
 }
