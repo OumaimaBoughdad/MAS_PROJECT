@@ -1,37 +1,32 @@
 package agents;
 
+
 import jade.core.Agent;
 import jade.core.behaviours.CyclicBehaviour;
 import jade.lang.acl.ACLMessage;
 import jade.lang.acl.MessageTemplate;
 import utils.HttpHelper;
 
-public class DuckDuckGoAgent extends Agent {
+public class OpenRouterAgent extends Agent {
     protected void setup() {
-        System.out.println(getAID().getName() + " is ready for general web searches.");
+        System.out.println(getAID().getName() + " is ready for AI-powered responses.");
 
         addBehaviour(new CyclicBehaviour(this) {
             public void action() {
                 ACLMessage msg = receive(MessageTemplate.MatchPerformative(ACLMessage.REQUEST));
                 if (msg != null) {
                     String query = msg.getContent();
-                    System.out.println("Searching DuckDuckGo for: " + query);
-                    String response = HttpHelper.searchExternalSource("duckduckgo", query);
+                    System.out.println("OpenRouterAgent processing query: " + query);
+
+                    String response = HttpHelper.searchExternalSource("openrouter", query);
 
                     ACLMessage reply = msg.createReply();
                     reply.setPerformative(ACLMessage.INFORM);
-                    reply.setContent(formatDDGResponse(response));
+                    reply.setContent("AI Response:\n" + response);
                     send(reply);
                 } else {
                     block();
                 }
-            }
-
-            private String formatDDGResponse(String raw) {
-                return "duck Result:\n" +
-                        (raw.equals("No result found.") ?
-                                "No instant answer available. Try a more specific query."
-                                : raw);
             }
         });
     }

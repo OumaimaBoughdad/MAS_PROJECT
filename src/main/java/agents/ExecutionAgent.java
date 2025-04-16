@@ -3,18 +3,19 @@ package agents;
 import jade.core.Agent;
 import jade.core.AID;
 import jade.core.behaviours.CyclicBehaviour;
-import jade.core.behaviours.ParallelBehaviour;
-import jade.core.behaviours.OneShotBehaviour;
 import jade.lang.acl.ACLMessage;
 import jade.lang.acl.MessageTemplate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
+import java.util.*;
+import java.util.concurrent.*;
 
 public class ExecutionAgent extends Agent {
-    private List<String> partialResults = new ArrayList<>();
-    private int expectedResponses = 0;
-    private ACLMessage originalRequest;
+    private static final String[] RESOURCE_AGENTS = {
+            "WikipediaAgent",
+            "DuckDuckGoAgent",
+            "BookSearchAgent",
+            "OpenRouterAgent",
+            "WolframAlphaAgent"
+    };
 
     protected void setup() {
         System.out.println("ExecutionAgent " + getAID().getName() + " is ready.");
@@ -23,114 +24,103 @@ public class ExecutionAgent extends Agent {
             public void action() {
                 ACLMessage msg = receive(MessageTemplate.MatchPerformative(ACLMessage.REQUEST));
                 if (msg != null) {
-                    originalRequest = msg;
                     String query = msg.getContent();
-                    System.out.println("ExecutionAgent processing: " + query);
+                    System.out.println("ExecutionAgent processing complex query: " + query);
 
-                    // Enhanced query decomposition
                     String[] subQueries = decomposeQuery(query);
-                    expectedResponses = subQueries.length;
-                    partialResults.clear();
+                    StringBuilder finalResult = new StringBuilder();
+                    finalResult.append("=== Combined Results ===\n\n");
 
-                    // Process each subquery
+                    ExecutorService executor = Executors.newFixedThreadPool(subQueries.length);
+                    List<Future<String>> futures = new ArrayList<>();
+
                     for (String subQuery : subQueries) {
-                        processSubQuery(subQuery.trim());
+                        futures.add(executor.submit(() -> processSubQuery(subQuery.trim())));
                     }
 
-                    // Once all subqueries have been processed, send the combined response
-                    sendCombinedResponse();
+                    for (Future<String> future : futures) {
+                        try {
+                            finalResult.append(future.get(10, TimeUnit.SECONDS)).append("\n\n");
+                        } catch (Exception e) {
+                            finalResult.append("• Error processing part of query\n\n");
+                        }
+                    }
+
+                    executor.shutdown();
+
+                    ACLMessage response = new ACLMessage(ACLMessage.INFORM);
+                    response.addReceiver(msg.getSender());
+                    response.setContent(finalResult.toString());
+                    send(response);
                 } else {
                     block();
                 }
             }
 
             private String[] decomposeQuery(String query) {
-                // Split by AND, commas, or multiple questions
-                return query.split("( and |, |\\? |; )");
+                return query.split("(?i)( and |, |\\? |; | vs\\.? | versus )");
             }
 
-            private void processSubQuery(String subQuery) {
-                System.out.println("Processing sub-query: " + subQuery);
+            private String processSubQuery(String subQuery) {
+                if (subQuery.isEmpty()) return "";
 
-                // First check internal knowledge
-                ACLMessage checkInternal = new ACLMessage(ACLMessage.QUERY_IF);
-                AID internalAgentAID = new AID("InternalAgent", AID.ISLOCALNAME);
-                checkInternal.addReceiver(internalAgentAID);
-                checkInternal.setContent(subQuery);
-                send(checkInternal);
+                // Check cache first
+                String cachedResponse = KnowledgeStorage.retrieve(subQuery);
+                if (cachedResponse != null) {
+                    return formatResult(subQuery, cachedResponse, "Cached Knowledge");
+                }
 
-                // Wait for response with timeout
-                MessageTemplate mt = MessageTemplate.or(
-                        MessageTemplate.MatchPerformative(ACLMessage.CONFIRM),
-                        MessageTemplate.MatchPerformative(ACLMessage.DISCONFIRM)
-                );
-                ACLMessage reply = blockingReceive(mt, 2000);
+                // Query all sources in parallel
+                ExecutorService executor = Executors.newFixedThreadPool(RESOURCE_AGENTS.length);
+                List<Future<String>> futures = new ArrayList<>();
+                StringBuilder subResult = new StringBuilder();
 
-                if (reply != null && reply.getPerformative() == ACLMessage.CONFIRM) {
-                    // Found in cache
-                    synchronized (partialResults) {
-                        partialResults.add("• " + subQuery + ": " + reply.getContent());
-                        System.out.println("Found result for '" + subQuery + "' in internal knowledge base");
-                    }
-                } else {
-                    // Not found - select best external resource
-                    String bestAgent = selectBestResourceAgent(subQuery);
-                    System.out.println("Selected " + bestAgent + " for: " + subQuery);
+                for (String agentName : RESOURCE_AGENTS) {
+                    futures.add(executor.submit(() -> {
+                        try {
+                            ACLMessage request = new ACLMessage(ACLMessage.REQUEST);
+                            request.addReceiver(new AID(agentName, AID.ISLOCALNAME));
+                            request.setContent(subQuery);
+                            send(request);
 
-                    ACLMessage askResource = new ACLMessage(ACLMessage.REQUEST);
-                    AID bestAgentAID = new AID(bestAgent, AID.ISLOCALNAME);
-                    askResource.addReceiver(bestAgentAID);
-                    askResource.setContent(subQuery);
-                    send(askResource);
-
-                    // Wait for response with timeout
-                    reply = blockingReceive(MessageTemplate.MatchPerformative(ACLMessage.INFORM), 5000);
-                    if (reply != null) {
-                        synchronized (partialResults) {
-                            partialResults.add("• " + subQuery + ": " + reply.getContent());
-                            System.out.println("Received result for '" + subQuery + "' from " + bestAgent);
+                            ACLMessage reply = blockingReceive(
+                                    MessageTemplate.and(
+                                            MessageTemplate.MatchPerformative(ACLMessage.INFORM),
+                                            MessageTemplate.MatchSender(new AID(agentName, AID.ISLOCALNAME))
+                                    ),
+                                    5000
+                            );
+                            return reply != null ? reply.getContent() : null;
+                        } catch (Exception e) {
+                            return null;
                         }
+                    }));
+                }
 
-                        // Store in cache
-                        ACLMessage store = new ACLMessage(ACLMessage.INFORM);
-                        store.addReceiver(internalAgentAID);
-                        store.setContent(subQuery + "::" + reply.getContent());
-                        send(store);
-                    } else {
-                        // No response from external agent
-                        synchronized (partialResults) {
-                            partialResults.add("• " + subQuery + ": No result found");
-                            System.out.println("No response received for '" + subQuery + "'");
+                // Collect results for this subquery
+                for (int i = 0; i < futures.size(); i++) {
+                    try {
+                        String result = futures.get(i).get(6, TimeUnit.SECONDS);
+                        if (result != null) {
+                            subResult.append(formatResult(subQuery, result, RESOURCE_AGENTS[i]))
+                                    .append("\n");
+                            // Store first successful response
+                            if (cachedResponse == null) {
+                                KnowledgeStorage.store(subQuery, result);
+                            }
                         }
+                    } catch (Exception e) {
+                        // Ignore timeouts
                     }
                 }
+
+                executor.shutdown();
+                return subResult.toString();
             }
 
-            private String selectBestResourceAgent(String query) {
-                // Simple heuristic for resource selection
-                if (query.matches(".*(book|author|novel|publication).*")) {
-                    return "BookSearchAgent";
-                } else if (query.matches(".*(what is|who is|define|explain).*")) {
-                    return "WikipediaAgent";
-                } else {
-                    return "DuckDuckGoAgent"; // Default fallback
-                }
-            }
-
-            private void sendCombinedResponse() {
-                StringBuilder finalResult = new StringBuilder();
-                finalResult.append("=== Combined Results ===\n");
-                for (String res : partialResults) {
-                    finalResult.append(res).append("\n\n");
-                }
-
-                // Create response message to sender of original request
-                ACLMessage response = new ACLMessage(ACLMessage.INFORM);
-                response.addReceiver(originalRequest.getSender());
-                response.setContent(finalResult.toString());
-                send(response);
-                System.out.println("Complex query processing complete and response sent to " +
-                        originalRequest.getSender().getName());
+            private String formatResult(String query, String response, String source) {
+                String sourceName = source.replace("Agent", "");
+                return String.format("• [%s] %s:\n%s", sourceName, query, response);
             }
         });
     }

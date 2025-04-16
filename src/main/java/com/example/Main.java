@@ -17,11 +17,7 @@ public class Main {
         AgentContainer container = rt.createMainContainer(p);
 
         try {
-            // Create and start agents
-            AgentController broker = container.createNewAgent(
-                    "BrokerAgent", "agents.BrokerAgent", null);
-            broker.start();
-
+            // Create and start all supporting agents first
             AgentController internal = container.createNewAgent(
                     "InternalAgent", "agents.InternalAgent", null);
             internal.start();
@@ -30,6 +26,7 @@ public class Main {
                     "ExecutionAgent", "agents.ExecutionAgent", null);
             execution.start();
 
+            // Create and start all resource agents
             AgentController wiki = container.createNewAgent(
                     "WikipediaAgent", "agents.WikipediaAgent", null);
             wiki.start();
@@ -42,11 +39,33 @@ public class Main {
                     "BookSearchAgent", "agents.BookSearchAgent", null);
             book.start();
 
+            // Add the new OpenRouter agent
+            AgentController openRouter = container.createNewAgent(
+                    "OpenRouterAgent", "agents.OpenRouterAgent", null);
+            openRouter.start();
+
+            // Add DeepSeek agent if you have one
+            AgentController deepSeek = container.createNewAgent(
+                    "DeepSeekAgent", "agents.DeepSeekAgent", null);
+            deepSeek.start();
+
+            // Add WolframAlpha agent if you have one
+
+
+            // Start the broker agent (needs to be after resource agents)
+            AgentController broker = container.createNewAgent(
+                    "BrokerAgent", "agents.BrokerAgent", null);
+            broker.start();
+
             // Start user agent last
             AgentController user = container.createNewAgent(
                     "UserAgent", "agents.UserAgent", null);
             user.start();
+
+            System.out.println("All agents started successfully!");
+
         } catch (StaleProxyException e) {
+            System.err.println("Error starting agents:");
             e.printStackTrace();
         }
     }
