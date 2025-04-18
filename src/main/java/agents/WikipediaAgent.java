@@ -1,5 +1,4 @@
-package agents;
-
+package agents;// WikipediaAgent.java
 import jade.core.Agent;
 import jade.core.behaviours.CyclicBehaviour;
 import jade.lang.acl.ACLMessage;
@@ -20,7 +19,7 @@ public class WikipediaAgent extends Agent {
 
                     ACLMessage reply = msg.createReply();
                     reply.setPerformative(ACLMessage.INFORM);
-                    reply.setContent(formatWikipediaResponse(response));
+                    reply.setContent("\n" + formatWikipediaResponse(response));
                     send(reply);
                 } else {
                     block();
@@ -28,8 +27,8 @@ public class WikipediaAgent extends Agent {
             }
 
             private String formatWikipediaResponse(String raw) {
-                return "Wikipedia Result:\n" +
-                        (raw.length() > 200 ? raw.substring(0, 200) + "..." : raw);
+                if (raw == null) return "No result.";
+                return raw; // Return the full response
             }
         });
     }

@@ -28,7 +28,7 @@ public class DuckDuckGoAgent extends Agent {
             }
 
             private String formatDDGResponse(String raw) {
-                return "duck Result:\n" +
+                return "\n" +
                         (raw.equals("No result found.") ?
                                 "No instant answer available. Try a more specific query."
                                 : raw);

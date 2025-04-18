@@ -20,7 +20,7 @@ public class BookSearchAgent extends Agent {
 
                     ACLMessage reply = msg.createReply();
                     reply.setPerformative(ACLMessage.INFORM);
-                    reply.setContent("Book Result:\n" + response);
+                    reply.setContent("\n" + response);
                     send(reply);
                 } else {
                     block();
