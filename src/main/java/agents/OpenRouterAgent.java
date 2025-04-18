@@ -22,7 +22,7 @@ public class OpenRouterAgent extends Agent {
 
                     ACLMessage reply = msg.createReply();
                     reply.setPerformative(ACLMessage.INFORM);
-                    reply.setContent("AI Response:\n" + response);
+                    reply.setContent("\n" + response);
                     send(reply);
                 } else {
                     block();

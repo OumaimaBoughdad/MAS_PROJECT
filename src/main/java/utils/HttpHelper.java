@@ -12,19 +12,121 @@ public class HttpHelper {
         try {
             switch (source.toLowerCase()) {
                 case "wikipedia":
-                    return "Wikipedia Result:\n" + searchWikipedia(query);
+                    return "\n" + searchWikipedia(query);
                 case "openrouter":
-                    return "AI Response:\n" + queryOpenRouter(query);
+                    return "\n" + queryOpenRouter(query);
                 case "duckduckgo":
-                    return "DuckDuckGo Result:\n" + searchDuckDuckGo(query);
+                    return "\n" + searchDuckDuckGo(query);
                 case "googlebooks":
-                    return "Book Result:\n" + searchGoogleBooks(query);
+                    return "\n" + searchGoogleBooks(query);
+                case "wikidata":
+                    return "\n" + searchWikidata(query);
+                case "langsearch":
+                    return "\n" + queryLangSearch(query);
                 default:
                     return "Unknown source: " + source;
             }
         } catch (Exception e) {
             return source + " Result:\nError fetching from " + source + ": " + cleanErrorMessage(e.getMessage());
         }
+    }
+
+    public static String searchWikidata(String query) throws Exception {
+        String formattedQuery = query.trim().replace(" ", "_");
+        String url = "https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles="
+                + URLEncoder.encode(formattedQuery, "UTF-8") + "&format=json";
+        String response = sendGet(url);
+        JSONObject json = new JSONObject(response);
+        JSONObject entities = json.optJSONObject("entities");
+        if (entities == null) {
+            throw new Exception("No entities found in Wikidata response");
+        }
+        for (String key : entities.keySet()) {
+            JSONObject entity = entities.getJSONObject(key);
+            JSONObject labels = entity.optJSONObject("labels");
+            JSONObject descriptions = entity.optJSONObject("descriptions");
+
+            String label = (labels != null && labels.has("en"))
+                    ? labels.getJSONObject("en").getString("value")
+                    : "";
+            String description = (descriptions != null && descriptions.has("en"))
+                    ? descriptions.getJSONObject("en").getString("value")
+                    : "No description available";
+
+            return label + ": " + description;
+        }
+        throw new Exception("No Wikidata entity found");
+    }
+
+    public static String queryLangSearch(String query) throws IOException {
+        String apiUrl = "https://api.langsearch.com/v1/web-search";
+        String apiKey = "Bearer sk-fc5b15b69cf74f8a8658a47fe46bca03";  // TODO: replace with your key
+
+        URL url = new URL(apiUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", apiKey);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+
+        String payload = String.format(
+                "{\"query\":\"%s\",\"freshness\":\"oneYear\",\"summary\":true,\"count\":5}",
+                query.replace("\"", "\\\"")
+        );
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(payload.getBytes("utf-8"));
+        }
+
+        // 2) Read response
+        StringBuilder raw = new StringBuilder();
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), "utf-8"))) {
+            String line;
+            while ((line = br.readLine()) != null) raw.append(line);
+        }
+
+        // 3) Parse JSON and extract snippet + link
+        JSONObject root = new JSONObject(raw.toString());
+        JSONObject data = root.optJSONObject("data");
+        if (data == null || !data.has("webPages")) {
+            return "No results found.";
+        }
+
+        JSONArray pages = data.getJSONObject("webPages").optJSONArray("value");
+        if (pages == null || pages.length() == 0) {
+            return "No results found.";
+        }
+
+        StringBuilder out = new StringBuilder();
+        int maxResults = 3; // Show fewer but more complete results
+        int maxSnippetLength = 300; // Limit per snippet
+
+        for (int i = 0; i < Math.min(pages.length(), maxResults); i++) {
+            JSONObject page = pages.getJSONObject(i);
+            String title = page.optString("name", "No title");
+            String urlLink = page.optString("url", "No URL");
+            String snippet = page.optString("snippet", "")
+                    .replaceAll("\\s+", " ")
+                    .trim();
+
+            // Handle truncation markers
+            boolean isTruncated = snippet.endsWith("...") ||
+                    snippet.length() >= maxSnippetLength;
+
+            if (snippet.length() > maxSnippetLength) {
+                snippet = snippet.substring(0, maxSnippetLength) + "...";
+            }
+
+            out.append("• ").append(title).append("\n")
+                    .append("  ").append(urlLink).append("\n")
+                    .append("  ").append(snippet);
+
+            if (isTruncated) {
+                out.append(" [read more]");
+            }
+            out.append("\n\n");
+        }
+
+        return out.toString().trim();
     }
 
     private static String cleanErrorMessage(String error) {
@@ -40,7 +142,7 @@ public class HttpHelper {
             URL url = new URL("https://openrouter.ai/api/v1/chat/completions");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", "Bearer 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");
+            conn.setRequestProperty("Authorization", "Bearer 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");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("HTTP-Referer", "YOUR_WEBSITE_URL");
             conn.setRequestProperty("X-Title", "YOUR_APP_NAME");
@@ -83,13 +185,25 @@ public class HttpHelper {
         String formattedQuery = query.trim().replace(" ", "_");
         String url = "https://en.wikipedia.org/api/rest_v1/page/summary/" +
                 URLEncoder.encode(formattedQuery, "UTF-8");
+
         String response = sendGet(url);
         JSONObject json = new JSONObject(response);
 
-        if (json.has("title") && !json.isNull("extract")) {
-            return json.getString("extract");
+        if (json.has("extract") && !json.isNull("extract")) {
+            String extract = json.getString("extract");
+            // Add "..." only if the extract appears truncated
+            if (extract.length() > 0 && extract.charAt(extract.length()-1) != '.') {
+                extract += "...";
+            }
+            return extract;
         }
-        throw new Exception("Page not found");
+
+        if (json.has("content_urls")) {
+            return "Summary not available. Full article: " +
+                    json.getJSONObject("content_urls").getString("desktop");
+        }
+
+        throw new Exception("Page not found or no summary available");
     }
 
     public static String searchDuckDuckGo(String query) throws Exception {

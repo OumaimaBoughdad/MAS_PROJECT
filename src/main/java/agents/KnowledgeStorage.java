@@ -19,20 +19,15 @@ public class KnowledgeStorage {
     public static synchronized void store(String query, String response) {
         // Don't store error responses
         if (response == null || response.contains("Error fetching") ||
-                response.contains("No result") || response.contains("HTTP error")) {
+                response.contains("No result") || response.contains("HTTP error") ||
+                response.contains("API Error")) {
             return;
-        }
-
-
-        // Clean AI responses before storage
-        if (response.startsWith("AI Response:")) {
-            response = response.substring("AI Response:".length()).trim();
         }
 
         try {
             JSONObject entry = new JSONObject();
             entry.put("query", query.toLowerCase()); // Normalize to lowercase
-            entry.put("response", cleanResponse(response));
+            entry.put("response", response);
             entry.put("timestamp", System.currentTimeMillis());
 
             JSONArray knowledgeArray;
@@ -54,16 +49,11 @@ public class KnowledgeStorage {
 
             knowledgeArray.put(entry);
             Files.write(Paths.get(STORAGE_FILE), knowledgeArray.toString().getBytes());
-            knowledgeMap.put(query.toLowerCase(), cleanResponse(response));
+            knowledgeMap.put(query.toLowerCase(), response);
 
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    private static String cleanResponse(String response) {
-        // Remove source prefixes like "Wikipedia Result:"
-        return response.replaceAll("^(Wikipedia|DuckDuckGo|BookSearch) Result:\\s*", "");
     }
 
     public static synchronized String retrieve(String query) {
@@ -102,7 +92,7 @@ public class KnowledgeStorage {
                     JSONObject entry = knowledgeArray.getJSONObject(i);
                     knowledgeMap.put(
                             entry.getString("query").toLowerCase(),
-                            cleanResponse(entry.getString("response"))
+                            entry.getString("response")
                     );
                 }
             }
