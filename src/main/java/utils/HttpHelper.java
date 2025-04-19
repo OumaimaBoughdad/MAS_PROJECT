@@ -2,7 +2,11 @@ package utils;
 
 import java.net.*;
 import java.io.*;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Scanner;
+import java.util.Set;
+
 import org.json.*;
 
 public class HttpHelper {
@@ -142,7 +146,7 @@ public class HttpHelper {
             URL url = new URL("https://openrouter.ai/api/v1/chat/completions");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", "Bearer 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");
+            conn.setRequestProperty("Authorization", "Bearer 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");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("HTTP-Referer", "YOUR_WEBSITE_URL");
             conn.setRequestProperty("X-Title", "YOUR_APP_NAME");
@@ -257,6 +261,131 @@ public class HttpHelper {
         return result.toString();
     }
 
+    public static String searchWolframAlpha(String query) throws Exception {
+        String apiKey = "YEU4GX-67X6429KHW"; // Replace with your API key
+        String encodedQuery = URLEncoder.encode(query, "UTF-8");
+        // Added more parameters to get richer results
+        String url = "http://api.wolframalpha.com/v2/query?input=" + encodedQuery +
+                "&format=plaintext,image&output=JSON&appid=" + apiKey +
+                "&includepodid=Result&includepodid=IndefiniteIntegral&includepodid=DefiniteIntegral" +
+                "&includepodid=Plot&includepodid=Derivative&includepodid=Limit";
+
+        String response = sendGet(url);
+        JSONObject json = new JSONObject(response);
+        JSONObject queryResult = json.getJSONObject("queryresult");
+
+        if (!queryResult.getBoolean("success")) {
+            return "No results found for the query.";
+        }
+
+        StringBuilder result = new StringBuilder();
+
+        if (!queryResult.has("pods") || queryResult.getJSONArray("pods").length() == 0) {
+            return "No interpretable results found.";
+        }
+
+        JSONArray pods = queryResult.getJSONArray("pods");
+
+        // List of important pods we want to include
+        Set<String> importantPods = new HashSet<>(Arrays.asList(
+                "Input", "Result", "IndefiniteIntegral", "DefiniteIntegral",
+                "Derivative", "Limit", "Plot", "GeometricFigure", "3DPlot",
+                "Integral", "SeriesExpansion", "AlternateForm"
+        ));
+
+        for (int i = 0; i < pods.length(); i++) {
+            JSONObject pod = pods.getJSONObject(i);
+            String podId = pod.getString("id");
+
+            // Only process important pods
+            if (importantPods.contains(podId)) {
+                String podTitle = pod.getString("title");
+                result.append("\n=== ").append(podTitle).append(" ===\n");
+
+                JSONArray subpods = pod.getJSONArray("subpods");
+                for (int j = 0; j < subpods.length(); j++) {
+                    JSONObject subpod = subpods.getJSONObject(j);
+                    String subpodTitle = subpod.optString("title", "");
+                    String plaintext = subpod.optString("plaintext", "");
+
+                    if (!subpodTitle.isEmpty()) {
+                        result.append(subpodTitle).append(": ");
+                    }
+                    if (!plaintext.isEmpty()) {
+                        result.append(plaintext).append("\n");
+                    }
+
+                    // Check for images if available
+                    if (subpod.has("img")) {
+                        JSONObject img = subpod.getJSONObject("img");
+                        result.append("[Image available: ").append(img.getString("title")).append("]\n");
+                    }
+                }
+            }
+        }
+
+        // Add assumptions and warnings if available
+        if (queryResult.has("assumptions")) {
+            result.append("\nAssumptions:\n");
+            JSONArray assumptions = queryResult.getJSONArray("assumptions");
+            for (int i = 0; i < assumptions.length(); i++) {
+                JSONObject assumption = assumptions.getJSONObject(i);
+                result.append("- ").append(assumption.getString("desc")).append("\n");
+            }
+        }
+
+        if (queryResult.has("warnings")) {
+            JSONObject warnings = queryResult.getJSONObject("warnings");
+            if (warnings.has("delimiters")) {
+                result.append("\nNote: Interpretation may be ambiguous. Try being more specific.\n");
+            }
+        }
+
+        return result.toString().trim();
+    }
+
+//    private static String queryTogetherAI(String prompt) {
+//        try {
+//            URL url = new URL("https://api.together.xyz/v1/chat/completions");
+//            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+//            conn.setRequestMethod("POST");
+//            conn.setRequestProperty("Authorization", "Bearer tgp_v1_cQRZMhXE8oa_GDIe6783hJ_rjSenBq4OooZblbILCc8");
+//            conn.setRequestProperty("Content-Type", "application/json");
+//            conn.setConnectTimeout(TIMEOUT);
+//            conn.setReadTimeout(TIMEOUT);
+//            conn.setDoOutput(true);
+//
+//            String payload = String.format("""
+//                {
+//                  \"model\": \"mistralai/Mixtral-8x7B-Instruct-v0.1\",
+//                  \"messages\": [{\"role\": \"user\", \"content\": \"%s\"}],
+//                  \"temperature\": 0.7,
+//                  \"max_tokens\": 1000
+//                }
+//                """, prompt.replace("\"", "\\\""));
+//
+//            try (OutputStream os = conn.getOutputStream()) {
+//                os.write(payload.getBytes());
+//                os.flush();
+//            }
+//
+//            if (conn.getResponseCode() == 200) {
+//                try (BufferedReader in = new BufferedReader(
+//                        new InputStreamReader(conn.getInputStream()))) {
+//                    JSONObject jsonResponse = new JSONObject(readAll(in));
+//                    return jsonResponse.getJSONArray("choices")
+//                            .getJSONObject(0)
+//                            .getJSONObject("message")
+//                            .getString("content");
+//                }
+//            } else {
+//                return "API Error: " + conn.getResponseCode();
+//            }
+//        } catch (Exception e) {
+//            return "Connection Error: " + e.getMessage();
+//        }
+//    }//
+
     private static String sendGet(String url) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setRequestMethod("GET");
@@ -282,5 +411,68 @@ public class HttpHelper {
             content.append(line);
         }
         return content.toString();
+    }
+    public static String queryTogetherAI(String prompt) {
+        try {
+            URL url = new URL("https://api.together.xyz/v1/chat/completions");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Authorization", "Bearer tgp_v1_DdPVLqyTQKjDAhxIrWGGh9r2DEHqDY82EK2AeO5aTYY"); // Replace with your key
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setConnectTimeout(15000); // 15 seconds timeout
+            conn.setReadTimeout(15000);
+            conn.setDoOutput(true);
+
+            // Improved prompt formatting
+            String formattedPrompt = prompt.endsWith("?") ? prompt : prompt + "?";
+            String payload = String.format("""
+            {
+              "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+              "messages": [{
+                "role": "system",
+                "content": "You are a helpful AI assistant that provides accurate and concise answers."
+              },{
+                "role": "user",
+                "content": "%s"
+              }],
+              "temperature": 0.7,
+              "max_tokens": 1000,
+              "stop": ["</s>"]
+            }
+            """, formattedPrompt.replace("\"", "\\\""));
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(payload.getBytes());
+                os.flush();
+            }
+
+            // Check response status
+            if (conn.getResponseCode() == 200) {
+                try (BufferedReader in = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream()))) {
+                    JSONObject jsonResponse = new JSONObject(readAll(in));
+                    String content = jsonResponse.getJSONArray("choices")
+                            .getJSONObject(0)
+                            .getJSONObject("message")
+                            .getString("content");
+
+                    // Clean up the response
+                    content = content.replaceAll("^\"|\"$", "") // Remove surrounding quotes
+                            .replaceAll("\\n{3,}", "\n\n") // Limit consecutive newlines
+                            .trim();
+
+                    return content.isEmpty() ? "No response content from Together.ai" : content;
+                }
+            } else {
+                // Read error stream for more details
+                try (BufferedReader err = new BufferedReader(
+                        new InputStreamReader(conn.getErrorStream()))) {
+                    String error = readAll(err);
+                    return "Together.ai API Error (" + conn.getResponseCode() + "): " + error;
+                }
+            }
+        } catch (Exception e) {
+            return "Together.ai Connection Error: " + e.getMessage();
+        }
     }
 }

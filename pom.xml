@@ -25,6 +25,13 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.15.2</version> <!-- or any newer version -->
         </dependency>
+
+        <!-- pom.xml -->
+        <dependency>
+            <groupId>edu.stanford.nlp</groupId>
+            <artifactId>stanford-corenlp</artifactId>
+            <version>4.5.1</version>
+        </dependency>
     </dependencies>
 
 
