@@ -63,6 +63,16 @@ public class Main {
                     "TogetherAgent", "agents.TogetherAgent", null);
             together.start();
 
+            //DeepInfraAgent
+
+            // In your main container setup:
+            AgentController deepInfraAgent = container.createNewAgent(
+                    "DeepInfraAgent",
+                    "agents.DeepInfraAgent",
+                    new Object[]{}
+            );
+            deepInfraAgent.start(); // Make sure this is called
+
             // Start wolfmath agent
             AgentController wolfram = container.createNewAgent(
                     "WolframAlphaAgent", "agents.WolframAlphaAgent", null);

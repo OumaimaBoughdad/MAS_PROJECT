@@ -10,7 +10,7 @@ import java.util.Set;
 import org.json.*;
 
 public class HttpHelper {
-    private static final int TIMEOUT = 10000;
+    private static final int TIMEOUT = 10000000;
 
     public static String searchExternalSource(String source, String query) {
         try {
@@ -25,8 +25,12 @@ public class HttpHelper {
                     return "\n" + searchGoogleBooks(query);
                 case "wikidata":
                     return "\n" + searchWikidata(query);
+                case "togetherai":
+                    return "\n" + queryTogetherAI(query);
                 case "langsearch":
                     return "\n" + queryLangSearch(query);
+                case "deepinfra":
+                    return "\n" + queryDeepInfra(query);
                 default:
                     return "Unknown source: " + source;
             }
@@ -146,7 +150,7 @@ public class HttpHelper {
             URL url = new URL("https://openrouter.ai/api/v1/chat/completions");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", "Bearer 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");
+            conn.setRequestProperty("Authorization", "Bearer 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");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("HTTP-Referer", "YOUR_WEBSITE_URL");
             conn.setRequestProperty("X-Title", "YOUR_APP_NAME");
@@ -475,4 +479,50 @@ public class HttpHelper {
             return "Together.ai Connection Error: " + e.getMessage();
         }
     }
+
+    public static String queryDeepInfra(String prompt) throws Exception {
+        URL url = new URL("https://api.deepinfra.com/v1/openai/chat/completions");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", "Bearer fxwH02MoRWd188aXfwZbi6muVDg5mp92");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setConnectTimeout(TIMEOUT);
+        conn.setReadTimeout(TIMEOUT);
+        conn.setDoOutput(true);
+
+        String payload = String.format("""
+        {
+          "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+          "messages": [{
+            "role": "user",
+            "content": "%s"
+          }],
+          "temperature": 0.7,
+          "max_tokens": 1000
+        }
+        """, prompt.replace("\"", "\\\""));
+
+        return executeRequest(conn, payload);
+    }
+    private static String executeRequest(HttpURLConnection conn, String payload) throws Exception {
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(payload.getBytes());
+            os.flush();
+        }
+
+        if (conn.getResponseCode() == 200) {
+            try (BufferedReader in = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream()))) {
+                JSONObject jsonResponse = new JSONObject(readAll(in));
+                return jsonResponse.getJSONArray("choices")
+                        .getJSONObject(0)
+                        .getJSONObject("message")
+                        .getString("content");
+            }
+        } else {
+            throw new IOException("API Error: " + conn.getResponseCode());
+        }
+    }
+
+
 }
